@@ -64,8 +64,8 @@ func ambiguousEvidenceBlocksMutation() async {
     let routeLog = ReconciliationLog()
     let routeCoordinator = reconciliationCoordinator(
         log: routeLog,
-        storedRecord: reconciliationRecord,
-        serverInspection: .verified(reconciliationRecord),
+        storedRecord: nil,
+        serverInspection: .missing,
         routeInspection: .occupied
     )
 

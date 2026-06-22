@@ -104,11 +104,11 @@ func managedServerAdoptionRequiresCompleteEvidence() async {
     )
     let scenarios: [(ManagedServerRecord?, ManagedProcessSnapshot?, Bool, String?)] = [
         (record, ManagedProcessSnapshot(executablePath: "/test/opencode", executableFingerprint: "expected-fingerprint"), false, nil),
-        (record, nil, false, "no longer running"),
         (record, ManagedProcessSnapshot(executablePath: "/other/process", executableFingerprint: "expected-fingerprint"), false, "different executable"),
         (record, ManagedProcessSnapshot(executablePath: "/test/opencode", executableFingerprint: "changed-fingerprint"), false, "changed on disk"),
         (ManagedServerRecord(processIdentifier: 4242, executablePath: "/test/opencode", backendPort: 5000, executableFingerprint: "expected-fingerprint"), ManagedProcessSnapshot(executablePath: "/test/opencode", executableFingerprint: "expected-fingerprint"), false, "recorded backend port"),
         (nil, nil, true, "occupied"),
+        (record, nil, true, "remains occupied"),
     ]
 
     for (storedRecord, snapshot, portOccupied, expectedConflict) in scenarios {
@@ -132,6 +132,31 @@ func managedServerAdoptionRequiresCompleteEvidence() async {
             #expect(inspection == .verified(record))
         }
     }
+}
+
+@Test("an exited Managed Server with a free backend port is safely treated as missing")
+func exitedManagedServerCanBeRecreated() async {
+    let server = SystemManagedServer(
+        http: DelayedReadinessHTTPChecker(failuresBeforeSuccess: 0),
+        processes: FixedManagedProcessInspector(snapshot: nil, portOccupied: false)
+    )
+    let inspection = await server.inspect(
+        record: ManagedServerRecord(
+            processIdentifier: 4242,
+            executablePath: "/test/opencode",
+            backendPort: 4096,
+            executableFingerprint: "expected-fingerprint"
+        ),
+        expectedConfiguration: ManagedServerConfiguration(
+            executablePath: "/test/opencode",
+            arguments: ["serve", "--hostname", "127.0.0.1", "--port", "4096"],
+            environment: [:],
+            workingDirectory: URL(fileURLWithPath: "/private/tmp")
+        ),
+        authentication: .basic(username: "opencode", credential: "secret")
+    )
+
+    #expect(inspection == .missing)
 }
 
 private actor DelayedReadinessHTTPChecker: AuthenticatedHTTPChecking {

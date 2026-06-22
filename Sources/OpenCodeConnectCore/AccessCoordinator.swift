@@ -468,6 +468,8 @@ public final class AccessCoordinator {
     @ObservationIgnored private let loginItem: any LaunchAtLoginControlling
     @ObservationIgnored private var launchAtLoginEnabled: Bool
     @ObservationIgnored private let power: any PowerAssertionControlling
+    @ObservationIgnored private var eventTail: Task<Void, Never>?
+    @ObservationIgnored private var eventSequence = 0
 
     public init(
         dependencies: any DependencyReadinessChecking,
@@ -531,6 +533,22 @@ public final class AccessCoordinator {
     }
 
     public func handle(_ event: AccessEvent) async {
+        eventSequence += 1
+        let sequence = eventSequence
+        let previous = eventTail
+        let task = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self else { return }
+            await self.process(event)
+        }
+        eventTail = task
+        await task.value
+        if eventSequence == sequence {
+            eventTail = nil
+        }
+    }
+
+    private func process(_ event: AccessEvent) async {
         switch event {
         case .logoutOrShutdown:
             guard !launchAtLoginEnabled else { return }
@@ -966,6 +984,19 @@ public final class AccessCoordinator {
                 workingDirectory: homeDirectory
             )
             await route.configure(tailscalePath: tailscalePath)
+            failedStage = .routeInspection
+            let routeInspection = try await route.inspect(
+                httpsPort: settings.httpsPort,
+                backendPort: settings.backendPort
+            )
+            if routeInspection == .occupied {
+                await publishConflict(
+                    "The Tailscale HTTPS listener or root route has a different target. " +
+                    "OpenCode Connect will not replace or remove it automatically.",
+                    notify: notifyFailure
+                )
+                return
+            }
             failedStage = .serverInspection
             switch await server.inspect(
                 record: try await runtimeRecordStore.load(),
@@ -987,8 +1018,7 @@ public final class AccessCoordinator {
                 await publishConflict(evidence, notify: notifyFailure)
                 return
             }
-            failedStage = .routeInspection
-            switch try await route.inspect(httpsPort: settings.httpsPort, backendPort: settings.backendPort) {
+            switch routeInspection {
             case .available:
                 createdRoute = true
                 failedStage = .routeCreation
@@ -1000,11 +1030,6 @@ public final class AccessCoordinator {
             case .matching:
                 break
             case .occupied:
-                await publishConflict(
-                    "The Tailscale HTTPS listener or root route has a different target. " +
-                    "OpenCode Connect will not replace or remove it automatically.",
-                    notify: notifyFailure
-                )
                 return
             }
             failedStage = .endpointDiscovery

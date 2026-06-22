@@ -211,7 +211,9 @@ public actor SystemManagedServer: ManagedServerControlling {
             return .conflict("The recorded executable path does not match the configured OpenCode executable.")
         }
         guard let snapshot = processes.snapshot(processIdentifier: record.processIdentifier) else {
-            return .conflict("The recorded PID \(record.processIdentifier) is no longer running.")
+            return processes.isLoopbackPortOccupied(expectedPort)
+                ? .conflict("The recorded PID \(record.processIdentifier) is unavailable while backend port \(expectedPort) remains occupied.")
+                : .missing
         }
         guard snapshot.executablePath == record.executablePath else {
             return .conflict("PID \(record.processIdentifier) now belongs to a different executable.")

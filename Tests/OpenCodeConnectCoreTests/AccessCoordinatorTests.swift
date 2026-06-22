@@ -200,8 +200,36 @@ func startReachesAvailableThroughProtectedPath() async {
         workingDirectory: URL(fileURLWithPath: "/Users/test")
     ))
     #expect(await operations.entries == [
-        "credential.load", "credential.save", "server.launch", "server.verifyLocal",
-        "route.inspect", "route.create", "route.discoverEndpoint", "route.verifyEndpoint",
+        "credential.load", "credential.save", "route.inspect", "server.launch",
+        "server.verifyLocal", "route.create", "route.discoverEndpoint", "route.verifyEndpoint",
+    ])
+}
+
+@Test("Stop waits for an in-flight reconciliation and remains the final intent")
+@MainActor
+func stopSerializesBehindInFlightStart() async {
+    let dependencies = BlockingDependencyReadiness()
+    let operations = OperationLog()
+    let coordinator = AccessCoordinator(
+        dependencies: dependencies,
+        credentialStore: DeterministicCredentialStore(existing: "secret", operations: operations),
+        passphraseGenerator: FixedPassphraseGenerator("unused"),
+        server: DeterministicServer(operations: operations),
+        route: DeterministicRoute(operations: operations)
+    )
+
+    let start = Task { await coordinator.handle(.start) }
+    await dependencies.waitUntilEvaluating()
+    let stop = Task { await coordinator.handle(.stop) }
+    await Task.yield()
+    await dependencies.resume()
+    await start.value
+    await stop.value
+
+    #expect(coordinator.viewModel.desiredState == .disabled)
+    #expect(coordinator.viewModel.observedState == .stopped)
+    #expect(await operations.entries.suffix(4) == [
+        "route.inspect", "server.ownership", "route.remove", "server.stopGracefully",
     ])
 }
 
@@ -623,7 +651,7 @@ func startupFailureRollsBackCreatedResources() async {
         ("credential.save", []),
         ("server.launch", []),
         ("server.verifyLocal", ["server.stopGracefully"]),
-        ("route.inspect", ["server.stopGracefully"]),
+        ("route.inspect", []),
         ("route.create", ["route.remove", "server.stopGracefully"]),
         ("route.discoverEndpoint", ["route.remove", "server.stopGracefully"]),
         ("route.verifyEndpoint", ["route.remove", "server.stopGracefully"]),
@@ -687,6 +715,31 @@ private actor OperationLog {
     private(set) var entries: [String] = []
     func append(_ entry: String) { entries.append(entry) }
     func removeAll() { entries.removeAll() }
+}
+
+private actor BlockingDependencyReadiness: DependencyReadinessChecking {
+    private var evaluationContinuation: CheckedContinuation<Void, Never>?
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func evaluate(settings: DependencySettings) async -> ReadinessEvaluation {
+        waiter?.resume()
+        waiter = nil
+        await withCheckedContinuation { evaluationContinuation = $0 }
+        return ReadinessEvaluation(
+            openCode: .ready(version: "1.2.3", executablePath: "/test/opencode"),
+            tailscale: .ready(version: "1.82.0", executablePath: "/test/tailscale")
+        )
+    }
+
+    func waitUntilEvaluating() async {
+        if evaluationContinuation != nil { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func resume() {
+        evaluationContinuation?.resume()
+        evaluationContinuation = nil
+    }
 }
 
 private actor DeterministicCredentialStore: AccessCredentialStoring {
