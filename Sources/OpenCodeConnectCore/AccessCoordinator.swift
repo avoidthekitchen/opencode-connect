@@ -595,7 +595,10 @@ public final class AccessCoordinator {
             await start(notifyFailure: true)
             return
         case .stop, .quit:
-            guard viewModel.observedState != .conflict else { return }
+            if viewModel.observedState == .conflict {
+                await disableIntentDuringConflict()
+                return
+            }
             await stop()
             return
         case .evaluateReadiness:
@@ -1117,6 +1120,25 @@ public final class AccessCoordinator {
         try? await runtimeRecordStore.clear()
         viewModel = stoppedViewModel()
         await reconcilePowerAssertion()
+    }
+
+    private func disableIntentDuringConflict() async {
+        await desiredStateStore.save(.disabled)
+        viewModel = AccessViewModel(
+            desiredState: .disabled,
+            observedState: .conflict,
+            explanation: viewModel.explanation,
+            components: viewModel.components,
+            primaryAction: .retryConflict,
+            endpoint: viewModel.endpoint,
+            enrollment: viewModel.enrollment,
+            failedStage: viewModel.failedStage,
+            remediation: viewModel.remediation,
+            diagnosticsReview: viewModel.diagnosticsReview,
+            availabilityWarning: viewModel.availabilityWarning
+        )
+        await reconcilePowerAssertion()
+        await diagnostics.recordLifecycle("Access disabled; Conflict cleanup deferred")
     }
 
     private func stoppedViewModel() -> AccessViewModel {

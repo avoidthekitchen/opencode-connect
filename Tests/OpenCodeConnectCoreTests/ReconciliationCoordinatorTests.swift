@@ -79,6 +79,36 @@ func ambiguousEvidenceBlocksMutation() async {
     #expect(await routeLog.entries.isEmpty)
 }
 
+@Test("Stop and Quit disable intent without mutating resources during Conflict")
+@MainActor
+func conflictAllowsDisablingIntent() async {
+    for event in [AccessEvent.stop, .quit] {
+        let log = ReconciliationLog()
+        let desiredStates = ReconciliationDesiredStateStore(initial: .enabled)
+        let evidence = "Backend port 4096 is occupied without a verifiable runtime record."
+        let coordinator = AccessCoordinator(
+            dependencies: ReconciliationDependencies(),
+            initialDesiredState: .enabled,
+            credentialStore: ReconciliationCredentialStore(),
+            passphraseGenerator: ReconciliationPassphraseGenerator(),
+            server: ReconciliationServer(log: log, inspection: .conflict(evidence)),
+            route: ReconciliationRoute(log: log, inspection: .available),
+            runtimeRecordStore: ReconciliationRecordStore(record: reconciliationRecord),
+            desiredStateStore: desiredStates
+        )
+
+        await coordinator.handle(.reconcile)
+        await coordinator.handle(event)
+
+        #expect(coordinator.viewModel.desiredState == .disabled)
+        #expect(coordinator.viewModel.observedState == .conflict)
+        #expect(coordinator.viewModel.explanation == evidence)
+        #expect(coordinator.viewModel.primaryAction == .retryConflict)
+        #expect(await desiredStates.saved == [.enabled, .disabled])
+        #expect(await log.entries.isEmpty)
+    }
+}
+
 @Test("Retry Inspection resolves Conflict only after external evidence becomes safe")
 @MainActor
 func retryInspectionResolvesConflictWithoutForcingResources() async {

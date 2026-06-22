@@ -44,7 +44,10 @@ struct MenuPopoverView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
-                if coordinator.viewModel.observedState == .error {
+                if coordinator.viewModel.observedState == .error
+                    || (coordinator.viewModel.observedState == .conflict
+                        && coordinator.viewModel.desiredState == .enabled)
+                {
                     Button("Stop") { Task { await coordinator.handle(.stop) } }
                         .controlSize(.large)
                 }
