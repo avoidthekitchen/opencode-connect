@@ -313,8 +313,8 @@ private enum ManagedServerHealthError: LocalizedError {
 }
 
 public actor SystemManagedRoute: ManagedRouteControlling {
-    private let tailscalePath: String
-    private let environment: [String: String]
+    private var tailscalePath: String
+    private var environment: [String: String]
     private let commands: any CommandRunning
     private let http: any AuthenticatedHTTPChecking
     private let endpointTimeout: Duration
@@ -335,12 +335,28 @@ public actor SystemManagedRoute: ManagedRouteControlling {
         self.endpointRetryDelay = endpointRetryDelay
     }
 
+    public func configure(tailscalePath: String) async {
+        self.tailscalePath = tailscalePath
+        environment = Self.environment(for: tailscalePath)
+    }
+
     public func inspect(httpsPort: Int, backendPort: Int) async throws -> ManagedRouteInspection {
         let status = try await serveStatus()
-        return CLIOutputParser.managedRouteInspection(status, httpsPort: httpsPort, backendPort: backendPort)
+        guard let inspection = CLIOutputParser.managedRouteInspection(
+            status,
+            httpsPort: httpsPort,
+            backendPort: backendPort
+        ) else {
+            throw RouteCommandError(
+                operation: "parsing Tailscale Serve status", timeoutSeconds: 5,
+                output: "Tailscale returned an invalid Serve status response", timedOut: false
+            )
+        }
+        return inspection
     }
 
     public func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws {
+        await configure(tailscalePath: tailscalePath)
         let result = await commands.run(request([
             "serve", "--bg", "--yes", "--https=\(httpsPort)", "http://127.0.0.1:\(backendPort)",
         ], timeout: .seconds(30)))
@@ -354,9 +370,9 @@ public actor SystemManagedRoute: ManagedRouteControlling {
         }
     }
 
-    public func discoverEndpoint() async throws -> URL {
+    public func discoverEndpoint(httpsPort: Int) async throws -> URL {
         let status = try await serveStatus()
-        guard let endpoint = CLIOutputParser.serveEndpoint(status) else {
+        guard let endpoint = CLIOutputParser.serveEndpoint(status, httpsPort: httpsPort) else {
             throw RouteCommandError(
                 operation: "discovering the Endpoint", timeoutSeconds: 5,
                 output: "Endpoint missing", timedOut: false
@@ -410,6 +426,10 @@ public actor SystemManagedRoute: ManagedRouteControlling {
 
     private func request(_ arguments: [String], timeout: Duration = .seconds(5)) -> CommandRequest {
         CommandRequest(executablePath: tailscalePath, arguments: arguments, environment: environment, timeout: timeout)
+    }
+
+    private static func environment(for tailscalePath: String) -> [String: String] {
+        tailscalePath.contains(".app/Contents/MacOS/") ? ["TS_MAC_CLIENT_USE_CLI": "1"] : [:]
     }
 }
 

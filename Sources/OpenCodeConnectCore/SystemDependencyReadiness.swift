@@ -201,11 +201,20 @@ public struct SystemDependencyReadiness: DependencyReadinessChecking {
             environment: environment,
             timeout: .seconds(5)
         ))
+        if statusResult.timedOut {
+            return .unavailable("status validation timed out")
+        }
+        if statusResult.exitCode != 0 {
+            let reason = statusResult.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .unavailable(reason.isEmpty ? "the CLI did not report status" : reason)
+        }
         switch CLIOutputParser.tailscaleConnection(statusResult.standardOutput) {
         case .signedOut:
             return .signedOut
-        case .disconnected, .unknown:
+        case .disconnected:
             return .disconnected
+        case .unknown:
+            return .unavailable("the CLI returned an invalid status response")
         case .connected:
             break
         }

@@ -124,6 +124,23 @@ func failureReleasesAssertion() async {
     #expect(await power.values == [true, false])
 }
 
+@Test("Power assertion acquisition failure degrades availability instead of reporting success")
+@MainActor
+func powerAssertionFailureIsVisible() async {
+    let power = FailingLifecyclePower()
+    let coordinator = lifecycleCoordinator(
+        initialDesiredState: .disabled,
+        loginEnabled: false,
+        power: power
+    )
+
+    await coordinator.handle(.start)
+
+    #expect(coordinator.viewModel.observedState == .degraded)
+    #expect(coordinator.viewModel.availabilityWarning?.contains("could not be kept awake") == true)
+    #expect(coordinator.viewModel.components.first { $0.name == "Keep Awake" }?.status == .needsSetup)
+}
+
 @Test("Explicit Quit disables access and releases the assertion regardless of login setting")
 @MainActor
 func explicitQuitDisablesAndReleases() async {
@@ -148,7 +165,7 @@ func explicitQuitDisablesAndReleases() async {
 private func lifecycleCoordinator(
     initialDesiredState: DesiredState,
     loginEnabled: Bool,
-    power: LifecyclePower = LifecyclePower(source: .external),
+    power: any PowerAssertionControlling = LifecyclePower(source: .external),
     desiredStateStore: LifecycleDesiredStateStore = LifecycleDesiredStateStore(),
     route: LifecycleRoute = LifecycleRoute(),
     retryPolicy: RetryPolicy = RetryPolicy()
@@ -180,6 +197,18 @@ private actor LifecyclePower: PowerAssertionControlling {
     func currentSource() async -> PowerSource { source }
     func setSource(_ source: PowerSource) { self.source = source }
     func setIdleSleepPreventionRequired(_ required: Bool) async { values.append(required) }
+}
+
+private actor FailingLifecyclePower: PowerAssertionControlling {
+    func currentSource() async -> PowerSource { .external }
+    func setIdleSleepPreventionRequired(_ required: Bool) async throws {
+        if required { throw LifecyclePowerFailure.unavailable }
+    }
+}
+
+private enum LifecyclePowerFailure: LocalizedError {
+    case unavailable
+    var errorDescription: String? { "Assertion service unavailable." }
 }
 
 private struct LifecycleDependencies: DependencyReadinessChecking {
@@ -226,7 +255,7 @@ private actor LifecycleRoute: ManagedRouteControlling {
     func setEndpointFailure(_ fails: Bool) { endpointFailure = fails }
     func inspect(httpsPort: Int, backendPort: Int) async throws -> ManagedRouteInspection { .matching }
     func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws {}
-    func discoverEndpoint() async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
+    func discoverEndpoint(httpsPort: Int) async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
     func verifyEndpoint(_ endpoint: URL, authentication: AccessAuthentication) async throws {
         if endpointFailure { throw LifecycleFailure.endpoint }
     }

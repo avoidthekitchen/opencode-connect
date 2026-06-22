@@ -48,6 +48,44 @@ func discoversAppStoreTailscaleInCLIMode() async {
     #expect(tailscaleRequests.allSatisfy { $0.environment["TS_MAC_CLIENT_USE_CLI"] == "1" })
 }
 
+@Test("Tailscale status command failures are not mislabeled as disconnection")
+func tailscaleStatusFailureIsUnavailable() async {
+    let files = StubExecutableFiles(executablePaths: [
+        "/opt/homebrew/bin/opencode", "/opt/homebrew/bin/tailscale",
+    ])
+    let scenarios: [(CommandResult, DependencyReadiness)] = [
+        (
+            CommandResult(exitCode: 1, standardOutput: "", standardError: "backend unavailable", timedOut: false),
+            .unavailable("backend unavailable")
+        ),
+        (
+            CommandResult(exitCode: -1, standardOutput: "", standardError: "Command timed out", timedOut: true),
+            .unavailable("status validation timed out")
+        ),
+        (
+            CommandResult(exitCode: 0, standardOutput: "not-json", standardError: "", timedOut: false),
+            .unavailable("the CLI returned an invalid status response")
+        ),
+    ]
+
+    for (statusResult, expected) in scenarios {
+        let commands = QueueCommandRunner(results: [
+            CommandResult(exitCode: 0, standardOutput: "1.1.25\n", standardError: "", timedOut: false),
+            CommandResult(exitCode: 0, standardOutput: "1.82.5\n", standardError: "", timedOut: false),
+            statusResult,
+        ])
+        let checker = SystemDependencyReadiness(
+            files: files,
+            commands: commands,
+            homeDirectory: URL(fileURLWithPath: "/Users/test")
+        )
+
+        let result = await checker.evaluate(settings: DependencySettings())
+
+        #expect(result.tailscale == expected)
+    }
+}
+
 private struct StubExecutableFiles: ExecutableFileChecking {
     let executablePaths: Set<String>
 

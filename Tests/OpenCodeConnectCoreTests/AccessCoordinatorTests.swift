@@ -812,7 +812,7 @@ private actor DeterministicRoute: ManagedRouteControlling {
         await operations.append("route.create")
         if failAt == "route.create" { throw InjectedFailure() }
     }
-    func discoverEndpoint() async throws -> URL {
+    func discoverEndpoint(httpsPort: Int) async throws -> URL {
         await operations.append("route.discoverEndpoint")
         if failAt == "route.discoverEndpoint" { throw InjectedFailure() }; return endpoint
     }

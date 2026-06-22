@@ -176,6 +176,36 @@ func stopRequiresVerifiedCleanupEvidence() async {
     #expect(await serverLog.entries == [])
 }
 
+@Test("Retry Inspection preserves Disabled intent after a Stop conflict")
+@MainActor
+func retryInspectionRetriesCleanupWhenDisabled() async {
+    let log = ReconciliationLog()
+    let route = ReconciliationRoute(log: log, inspection: .matching)
+    let coordinator = AccessCoordinator(
+        dependencies: ReconciliationDependencies(),
+        initialDesiredState: .enabled,
+        credentialStore: ReconciliationCredentialStore(),
+        passphraseGenerator: ReconciliationPassphraseGenerator(),
+        server: ReconciliationServer(log: log, inspection: .verified(reconciliationRecord)),
+        route: route,
+        runtimeRecordStore: ReconciliationRecordStore(record: reconciliationRecord)
+    )
+    await coordinator.handle(.reconcile)
+    await log.removeAll()
+    await route.setInspection(.occupied)
+    await coordinator.handle(.stop)
+
+    #expect(coordinator.viewModel.desiredState == .disabled)
+    #expect(coordinator.viewModel.observedState == .conflict)
+
+    await route.setInspection(.matching)
+    await coordinator.handle(.retryConflict)
+
+    #expect(coordinator.viewModel.desiredState == .disabled)
+    #expect(coordinator.viewModel.observedState == .stopped)
+    #expect(await log.entries == ["route.remove", "server.stop"])
+}
+
 @MainActor
 private func reconciliationCoordinator(
     log: ReconciliationLog,
@@ -287,7 +317,7 @@ private actor ReconciliationRoute: ManagedRouteControlling {
     func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws {
         await log.append("route.create")
     }
-    func discoverEndpoint() async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
+    func discoverEndpoint(httpsPort: Int) async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
     func verifyEndpoint(_ endpoint: URL, authentication: AccessAuthentication) async throws {}
     func removeIfMatching(httpsPort: Int, backendPort: Int) async throws {
         await log.append("route.remove")

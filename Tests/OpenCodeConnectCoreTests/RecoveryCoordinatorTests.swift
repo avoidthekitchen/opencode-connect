@@ -293,7 +293,7 @@ private actor RecoveryRoute: ManagedRouteControlling {
         return .matching
     }
     func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws {}
-    func discoverEndpoint() async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
+    func discoverEndpoint(httpsPort: Int) async throws -> URL { URL(string: "https://test.tailnet.ts.net")! }
     func verifyEndpoint(_ endpoint: URL, authentication: AccessAuthentication) async throws {
         endpointVerificationCount += 1
         if remainingEndpointFailures > 0 {

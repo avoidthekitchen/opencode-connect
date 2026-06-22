@@ -17,7 +17,7 @@ func systemRouteUsesTargetedPrivateCommands() async throws {
 
     #expect(try await route.inspect(httpsPort: 443, backendPort: 4096) == .available)
     try await route.create(tailscalePath: "/test/tailscale", httpsPort: 443, backendPort: 4096)
-    let endpoint = try await route.discoverEndpoint()
+    let endpoint = try await route.discoverEndpoint(httpsPort: 443)
     try await route.verifyEndpoint(endpoint, authentication: .basic(username: "opencode", credential: "secret"))
     try await route.removeIfMatching(httpsPort: 443, backendPort: 4096)
 
@@ -100,6 +100,47 @@ func routeCreationTimeoutIsSpecific() async {
 
     #expect(message.contains("creating the Managed Route"))
     #expect(message.contains("30 seconds"))
+}
+
+@Test("Managed Route inspection fails closed when Serve status is malformed")
+func malformedServeStatusFailsClosed() async {
+    let commands = RouteCommandRunner(results: [
+        CommandResult(exitCode: 0, standardOutput: "not-json", standardError: "", timedOut: false),
+    ])
+    let route = SystemManagedRoute(tailscalePath: "/test/tailscale", commands: commands)
+
+    await #expect(throws: Error.self) {
+        try await route.inspect(httpsPort: 443, backendPort: 4096)
+    }
+    #expect(await commands.requests.count == 1)
+}
+
+@Test("Managed Route discovers only the configured HTTPS listener")
+func endpointDiscoveryUsesConfiguredPort() async throws {
+    let status = #"{"Web":{"wrong.example.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:9000"}}},"right.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:4096"}}}}}"#
+    let route = SystemManagedRoute(
+        tailscalePath: "/test/tailscale",
+        commands: RouteCommandRunner(results: [
+            CommandResult(exitCode: 0, standardOutput: status, standardError: "", timedOut: false),
+        ])
+    )
+
+    #expect(try await route.discoverEndpoint(httpsPort: 443) == URL(string: "https://right.example.ts.net"))
+}
+
+@Test("Managed Route switches every operation to the currently resolved Tailscale executable")
+func managedRouteUsesCurrentExecutable() async throws {
+    let commands = RouteCommandRunner(results: [
+        CommandResult(exitCode: 0, standardOutput: #"{"Web":{}}"#, standardError: "", timedOut: false),
+    ])
+    let route = SystemManagedRoute(tailscalePath: "/old/tailscale", commands: commands)
+
+    await route.configure(tailscalePath: "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+    _ = try await route.inspect(httpsPort: 443, backendPort: 4096)
+
+    let request = try #require(await commands.requests.first)
+    #expect(request.executablePath == "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+    #expect(request.environment["TS_MAC_CLIENT_USE_CLI"] == "1")
 }
 
 private actor RouteCommandRunner: CommandRunning {

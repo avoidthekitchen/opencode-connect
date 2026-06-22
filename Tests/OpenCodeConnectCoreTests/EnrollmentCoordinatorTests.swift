@@ -135,7 +135,7 @@ private actor EnrollmentRoute: ManagedRouteControlling {
     init(endpoint: URL) { self.endpoint = endpoint }
     func inspect(httpsPort: Int, backendPort: Int) async throws -> ManagedRouteInspection { .available }
     func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws {}
-    func discoverEndpoint() async throws -> URL { endpoint }
+    func discoverEndpoint(httpsPort: Int) async throws -> URL { endpoint }
     func verifyEndpoint(_ endpoint: URL, authentication: AccessAuthentication) async throws {}
     func removeIfMatching(httpsPort: Int, backendPort: Int) async throws {}
 }

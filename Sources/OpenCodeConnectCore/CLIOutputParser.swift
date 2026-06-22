@@ -8,14 +8,18 @@ public enum TailscaleConnectionState: Equatable, Sendable {
 }
 
 public enum CLIOutputParser {
-    public static func managedRouteInspection(_ output: String, httpsPort: Int, backendPort: Int) -> ManagedRouteInspection {
-        let routes = serveRoutes(output)
+    public static func managedRouteInspection(
+        _ output: String,
+        httpsPort: Int,
+        backendPort: Int
+    ) -> ManagedRouteInspection? {
+        guard let routes = serveRoutes(output) else { return nil }
         guard let route = routes.first(where: { $0.port == httpsPort }) else { return .available }
         return route.proxy == "http://127.0.0.1:\(backendPort)" ? .matching : .occupied
     }
 
-    public static func serveEndpoint(_ output: String) -> URL? {
-        guard let route = serveRoutes(output).first else { return nil }
+    public static func serveEndpoint(_ output: String, httpsPort: Int) -> URL? {
+        guard let route = serveRoutes(output)?.first(where: { $0.port == httpsPort }) else { return nil }
         return URL(string: route.port == 443 ? "https://\(route.host)" : "https://\(route.host):\(route.port)")
     }
 
@@ -72,18 +76,21 @@ public enum CLIOutputParser {
             }
     }
 
-    private static func serveRoutes(_ output: String) -> [(host: String, port: Int, proxy: String?)] {
+    private static func serveRoutes(_ output: String) -> [(host: String, port: Int, proxy: String?)]? {
         guard let data = output.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let web = root["Web"] as? [String: Any]
-        else { return [] }
-        return web.compactMap { key, value in
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        guard let webValue = root["Web"] else { return [] }
+        guard let web = webValue as? [String: Any] else { return nil }
+        var routes: [(host: String, port: Int, proxy: String?)] = []
+        for (key, value) in web {
             let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2, let port = Int(parts[1]) else { return nil }
-            let config = value as? [String: Any]
-            let handlers = config?["Handlers"] as? [String: Any]
+            guard parts.count == 2, let port = Int(parts[1]), let config = value as? [String: Any]
+            else { return nil }
+            let handlers = config["Handlers"] as? [String: Any]
             let rootHandler = handlers?["/"] as? [String: Any]
-            return (parts[0], port, rootHandler?["Proxy"] as? String)
+            routes.append((parts[0], port, rootHandler?["Proxy"] as? String))
         }
+        return routes
     }
 }

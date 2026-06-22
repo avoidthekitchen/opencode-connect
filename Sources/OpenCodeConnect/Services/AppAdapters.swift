@@ -36,22 +36,38 @@ actor SystemPowerAssertionController: PowerAssertionControlling {
         return (source as String) == kIOPSACPowerValue ? .external : .battery
     }
 
-    func setIdleSleepPreventionRequired(_ required: Bool) async {
+    func setIdleSleepPreventionRequired(_ required: Bool) async throws {
         if required, assertionID == kIOPMNullAssertionID {
-            IOPMAssertionCreateWithName(
+            let result = IOPMAssertionCreateWithName(
                 kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
                 IOPMAssertionLevel(kIOPMAssertionLevelOn),
                 "OpenCode Connect is keeping Enabled access available" as CFString,
                 &assertionID
             )
+            guard result == kIOReturnSuccess else {
+                assertionID = IOPMAssertionID(kIOPMNullAssertionID)
+                throw PowerAssertionError(operation: "create", status: result)
+            }
         } else if !required, assertionID != kIOPMNullAssertionID {
-            IOPMAssertionRelease(assertionID)
+            let result = IOPMAssertionRelease(assertionID)
+            guard result == kIOReturnSuccess else {
+                throw PowerAssertionError(operation: "release", status: result)
+            }
             assertionID = IOPMAssertionID(kIOPMNullAssertionID)
         }
     }
 
     deinit {
         if assertionID != kIOPMNullAssertionID { IOPMAssertionRelease(assertionID) }
+    }
+}
+
+private struct PowerAssertionError: LocalizedError {
+    let operation: String
+    let status: IOReturn
+
+    var errorDescription: String? {
+        "Could not \(operation) the idle-sleep assertion (IOKit status \(status))."
     }
 }
 

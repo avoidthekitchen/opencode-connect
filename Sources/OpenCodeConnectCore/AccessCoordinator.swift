@@ -170,13 +170,13 @@ public enum PowerSource: Equatable, Sendable { case external, battery }
 
 public protocol PowerAssertionControlling: Sendable {
     func currentSource() async -> PowerSource
-    func setIdleSleepPreventionRequired(_ required: Bool) async
+    func setIdleSleepPreventionRequired(_ required: Bool) async throws
 }
 
 public actor NoopPowerAssertionController: PowerAssertionControlling {
     public init() {}
     public func currentSource() async -> PowerSource { .external }
-    public func setIdleSleepPreventionRequired(_ required: Bool) async {}
+    public func setIdleSleepPreventionRequired(_ required: Bool) async throws {}
 }
 
 public protocol LaunchAtLoginControlling: Sendable {
@@ -229,11 +229,16 @@ public extension ManagedServerControlling {
 public enum ManagedRouteInspection: Equatable, Sendable { case available, matching, occupied }
 
 public protocol ManagedRouteControlling: Sendable {
+    func configure(tailscalePath: String) async
     func inspect(httpsPort: Int, backendPort: Int) async throws -> ManagedRouteInspection
     func create(tailscalePath: String, httpsPort: Int, backendPort: Int) async throws
-    func discoverEndpoint() async throws -> URL
+    func discoverEndpoint(httpsPort: Int) async throws -> URL
     func verifyEndpoint(_ endpoint: URL, authentication: AccessAuthentication) async throws
     func removeIfMatching(httpsPort: Int, backendPort: Int) async throws
+}
+
+public extension ManagedRouteControlling {
+    func configure(tailscalePath: String) async {}
 }
 
 public struct DependencySettings: Equatable, Sendable {
@@ -303,6 +308,7 @@ public enum DependencyReadiness: Equatable, Sendable {
     case signedOut
     case serveApprovalRequired(URL)
     case serveUnavailable(String)
+    case unavailable(String)
 }
 
 public struct ReadinessEvaluation: Equatable, Sendable {
@@ -532,7 +538,7 @@ public final class AccessCoordinator {
             return
         case .sleep:
             guard viewModel.desiredState == .enabled else { return }
-            await power.setIdleSleepPreventionRequired(false)
+            try? await power.setIdleSleepPreventionRequired(false)
             viewModel = AccessViewModel(
                 desiredState: .enabled,
                 observedState: .degraded,
@@ -578,7 +584,11 @@ public final class AccessCoordinator {
             return
         case .retryConflict:
             guard viewModel.observedState == .conflict else { return }
-            await start(notifyFailure: true)
+            if viewModel.desiredState == .enabled {
+                await start(notifyFailure: true)
+            } else {
+                await stop()
+            }
             return
         case .start:
             automaticRetriesExhausted = false
@@ -851,6 +861,19 @@ public final class AccessCoordinator {
             )
             return
         }
+        if case let .unavailable(reason) = evaluation.tailscale {
+            viewModel = AccessViewModel(
+                desiredState: .disabled,
+                observedState: .needsSetup,
+                explanation: "Tailscale could not be validated: \(reason). Check the installation and retry readiness.",
+                components: [
+                    component(for: evaluation.openCode, name: "OpenCode"),
+                    ComponentReadiness(name: "Tailscale", status: .needsSetup, detail: "Validation failed"),
+                ],
+                primaryAction: .retryReadiness
+            )
+            return
+        }
         guard case let .ready(tailscaleVersion, _) = evaluation.tailscale else {
             viewModel = AccessViewModel(
                 desiredState: .disabled,
@@ -939,6 +962,7 @@ public final class AccessCoordinator {
                 environment: environment,
                 workingDirectory: homeDirectory
             )
+            await route.configure(tailscalePath: tailscalePath)
             failedStage = .serverInspection
             switch await server.inspect(
                 record: try await runtimeRecordStore.load(),
@@ -981,7 +1005,7 @@ public final class AccessCoordinator {
                 return
             }
             failedStage = .endpointDiscovery
-            let endpoint = try await route.discoverEndpoint()
+            let endpoint = try await route.discoverEndpoint(httpsPort: settings.httpsPort)
             let enrollment = try await enrollmentState(for: endpoint, username: username)
             failedStage = .endpointVerification
             try await route.verifyEndpoint(endpoint, authentication: authentication)
@@ -1120,15 +1144,37 @@ public final class AccessCoordinator {
         case .never: false
         }
         let required = active && policyRequiresAssertion
-        await power.setIdleSleepPreventionRequired(required)
-        let warning = active && source == .battery && !required
-            ? "The Mac is on battery power and may become unavailable when it sleeps."
-            : nil
+        let assertionFailure: String?
+        do {
+            try await power.setIdleSleepPreventionRequired(required)
+            assertionFailure = nil
+        } catch {
+            assertionFailure = error.localizedDescription
+        }
+        let assertionUnavailable = required && assertionFailure != nil
+        let observedState = assertionUnavailable && viewModel.observedState == .available
+            ? ObservedState.degraded
+            : viewModel.observedState
+        let warning: String?
+        if let assertionFailure {
+            warning = required
+                ? "The Mac could not be kept awake: \(assertionFailure)"
+                : "The idle-sleep assertion could not be released: \(assertionFailure)"
+        } else if active && source == .battery && !required {
+            warning = "The Mac is on battery power and may become unavailable when it sleeps."
+        } else {
+            warning = nil
+        }
         viewModel = AccessViewModel(
             desiredState: viewModel.desiredState,
-            observedState: viewModel.observedState,
-            explanation: viewModel.explanation,
-            components: viewModel.components,
+            observedState: observedState,
+            explanation: assertionUnavailable
+                ? "Access is available, but idle-sleep prevention could not be enabled."
+                : viewModel.explanation,
+            components: viewModel.components.map { component in
+                guard component.name == "Keep Awake", assertionUnavailable else { return component }
+                return ComponentReadiness(name: component.name, status: .needsSetup, detail: "Assertion unavailable")
+            },
             primaryAction: viewModel.primaryAction,
             endpoint: viewModel.endpoint,
             enrollment: viewModel.enrollment,
@@ -1263,7 +1309,7 @@ public final class AccessCoordinator {
         switch readiness {
         case .missing, .invalidCustomPath:
             false
-        case .ready, .disconnected, .signedOut, .serveApprovalRequired, .serveUnavailable:
+        case .ready, .disconnected, .signedOut, .serveApprovalRequired, .serveUnavailable, .unavailable:
             true
         }
     }
@@ -1360,6 +1406,8 @@ public final class AccessCoordinator {
             return ComponentReadiness(name: name, status: .needsSetup, detail: "HTTPS approval required")
         case .serveUnavailable:
             return ComponentReadiness(name: name, status: .needsSetup, detail: "Serve HTTPS unavailable")
+        case .unavailable:
+            return ComponentReadiness(name: name, status: .needsSetup, detail: "Validation failed")
         }
     }
 }
