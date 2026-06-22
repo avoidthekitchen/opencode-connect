@@ -1,0 +1,5 @@
+{
+  "BackendState": "Running",
+  "TailscaleIPs": ["100.64.0.10"],
+  "Self": { "Online": true }
+}
