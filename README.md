@@ -1,6 +1,10 @@
 # OpenCode Connect
 
-OpenCode Connect is a menu-bar-only macOS utility that makes a separately installed OpenCode server available to an iPhone through a private Tailscale Serve route. It manages one loopback-only OpenCode server, one app-owned route, enrollment, recovery, and cleanup without taking ownership of unrelated processes or Tailscale configuration.
+OpenCode Connect is a menu-bar-only macOS utility that makes a separately installed OpenCode server available to an iPhone through a private Tailscale Serve route. Manage and see your tailscale endpoint to OpenCode at a glance. 
+
+<img width="431" height="415" alt="image" src="https://github.com/user-attachments/assets/a96dbb84-a7c4-48d7-81ef-37d1e1971a99" />
+
+OpenCode/Tailscale default CLI commands works great, but it's still clunky to share the endpoint to your phone, especially if you regularly have port conflicts from other dev processes. I wanted something simple that made it easier to see the OpenCode server you have running, and send your Tailscale endpoint to your phone. I considered a relay service, but didn't want extra background daemons. This is basically a menu bar GUI wrapper for existing OpenCode and Tailscale services that transparently manages an OpenCode server, an app-owned route, enrollment via QR code, recovery, and cleanup without adding invisible, unnecessary background daemons. 
 
 ## Support status
 
