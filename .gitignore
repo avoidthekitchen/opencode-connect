@@ -2,3 +2,5 @@
 dist/
 .DS_Store
 docs/.DS_Store
+.codex/environment.toml
+.codex/environments/environment.toml

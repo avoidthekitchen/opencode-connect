@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 @testable import OpenCodeConnectCore
 
@@ -159,6 +160,21 @@ func exitedManagedServerCanBeRecreated() async {
     #expect(inspection == .missing)
 }
 
+@Test("Loopback port inspection detects listeners without opening a connection")
+func loopbackPortInspectionDoesNotConnectToTheListener() throws {
+    let listener = try LoopbackTestListener()
+    defer { listener.close() }
+
+    let occupied = SystemManagedProcessInspector().isLoopbackPortOccupied(listener.port)
+    let acceptedDescriptor = listener.acceptPendingConnection()
+    if acceptedDescriptor >= 0 {
+        Darwin.close(acceptedDescriptor)
+    }
+
+    #expect(occupied)
+    #expect(acceptedDescriptor < 0)
+}
+
 private actor DelayedReadinessHTTPChecker: AuthenticatedHTTPChecking {
     private let failuresBeforeSuccess: Int
     private(set) var attempts = 0
@@ -181,4 +197,59 @@ private struct FixedManagedProcessInspector: ManagedProcessInspecting {
 
     func snapshot(processIdentifier: Int32) -> ManagedProcessSnapshot? { snapshot }
     func isLoopbackPortOccupied(_ port: Int) -> Bool { portOccupied }
+}
+
+private final class LoopbackTestListener {
+    let descriptor: Int32
+    private(set) var port: Int = 0
+
+    init() throws {
+        descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        var reuse: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bindResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else {
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        guard listen(descriptor, 1) == 0 else {
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+
+        var boundAddress = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &boundAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard nameResult == 0 else {
+            Darwin.close(descriptor)
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+        port = Int(in_port_t(bigEndian: boundAddress.sin_port))
+
+        let flags = fcntl(descriptor, F_GETFL)
+        _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+    }
+
+    func acceptPendingConnection() -> Int32 {
+        Darwin.accept(descriptor, nil, nil)
+    }
+
+    func close() {
+        Darwin.close(descriptor)
+    }
 }

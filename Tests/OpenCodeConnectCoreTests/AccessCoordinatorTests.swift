@@ -385,6 +385,26 @@ func invalidOperationalSettingsAreNotSaved() async {
     #expect(coordinator.settingsViewModel.httpsPort == 443)
 }
 
+@Test("Port validation rejects privileged backend ports and overlapping backend and HTTPS ports")
+@MainActor
+func unsafePortSelectionsAreRejectedBeforePersistence() async {
+    let settingsStore = RecordingSettingsStore()
+    let coordinator = AccessCoordinator(
+        dependencies: readyDependencies,
+        settingsStore: settingsStore
+    )
+
+    await coordinator.handle(.updatePorts(backend: 80, https: 8443))
+    #expect(coordinator.settingsViewModel.message?.contains("backend port must be 1024 or higher") == true)
+
+    await coordinator.handle(.updatePorts(backend: 4096, https: 4096))
+    #expect(coordinator.settingsViewModel.message?.contains("must be different") == true)
+
+    #expect(await settingsStore.saved.isEmpty)
+    #expect(coordinator.settingsViewModel.backendPort == 4096)
+    #expect(coordinator.settingsViewModel.httpsPort == 443)
+}
+
 @Test("Credential rotation warns the iPhone user, deletion is explicit, and Protected Access repairs absence")
 @MainActor
 func credentialLifecycleIsExplicitAndRepairable() async {

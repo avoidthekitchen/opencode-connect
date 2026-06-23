@@ -721,6 +721,14 @@ public final class AccessCoordinator {
                 publishSettings(message: "Backend and Serve HTTPS ports must be between 1 and 65535.")
                 return
             }
+            guard backend >= 1024 else {
+                publishSettings(message: "The OpenCode backend port must be 1024 or higher.")
+                return
+            }
+            guard backend != https else {
+                publishSettings(message: "The OpenCode backend and Serve HTTPS ports must be different.")
+                return
+            }
             settings.backendPort = backend
             settings.httpsPort = https
             await settingsStore.save(settings)
@@ -953,106 +961,106 @@ public final class AccessCoordinator {
             var failedStage = FailureStage.credential
             var sensitiveValues: [String] = []
             do {
-            let authentication: AccessAuthentication
-            let environment: [String: String]
-            switch settings.accessMode {
-            case .protected:
-                guard let credentialStore, let passphraseGenerator else {
-                    throw AccessLifecycleError.credentialInfrastructureUnavailable
+                let authentication: AccessAuthentication
+                let environment: [String: String]
+                switch settings.accessMode {
+                case .protected:
+                    guard let credentialStore, let passphraseGenerator else {
+                        throw AccessLifecycleError.credentialInfrastructureUnavailable
+                    }
+                    let credential: String
+                    if let existing = try await credentialStore.load() {
+                        credential = existing
+                    } else {
+                        credential = try passphraseGenerator.generate()
+                        try await credentialStore.save(credential)
+                    }
+                    authentication = .basic(username: username, credential: credential)
+                    sensitiveValues = [username, credential]
+                    environment = [
+                        "OPENCODE_SERVER_USERNAME": username,
+                        "OPENCODE_SERVER_PASSWORD": credential,
+                    ]
+                case .tailnetOnly:
+                    authentication = .none
+                    environment = [:]
                 }
-                let credential: String
-                if let existing = try await credentialStore.load() {
-                    credential = existing
-                } else {
-                    credential = try passphraseGenerator.generate()
-                    try await credentialStore.save(credential)
-                }
-                authentication = .basic(username: username, credential: credential)
-                sensitiveValues = [username, credential]
-                environment = [
-                    "OPENCODE_SERVER_USERNAME": username,
-                    "OPENCODE_SERVER_PASSWORD": credential,
-                ]
-            case .tailnetOnly:
-                authentication = .none
-                environment = [:]
-            }
-            let configuration = ManagedServerConfiguration(
-                executablePath: openCodePath,
-                arguments: ["serve", "--hostname", "127.0.0.1", "--port", "\(settings.backendPort)"],
-                environment: environment,
-                workingDirectory: homeDirectory
-            )
-            await route.configure(tailscalePath: tailscalePath)
-            failedStage = .routeInspection
-            let routeInspection = try await route.inspect(
-                httpsPort: settings.httpsPort,
-                backendPort: settings.backendPort
-            )
-            if routeInspection == .occupied {
-                await publishConflict(
-                    "The Tailscale HTTPS listener or root route has a different target. " +
-                    "OpenCode Connect will not replace or remove it automatically.",
-                    notify: notifyFailure
+                let configuration = ManagedServerConfiguration(
+                    executablePath: openCodePath,
+                    arguments: ["serve", "--hostname", "127.0.0.1", "--port", "\(settings.backendPort)"],
+                    environment: environment,
+                    workingDirectory: homeDirectory
                 )
-                return
-            }
-            failedStage = .serverInspection
-            switch await server.inspect(
-                record: try await runtimeRecordStore.load(),
-                expectedConfiguration: configuration,
-                authentication: authentication
-            ) {
-            case .missing:
-                failedStage = .serverLaunch
-                createdServer = try await server.launch(configuration)
-                if createdServer, let record = try await server.runtimeRecord() {
-                    try await runtimeRecordStore.save(record)
-                }
-                failedStage = .localHealth
-                try await server.verifyLocalHealth(authentication: authentication)
-            case .verified:
-                failedStage = .localHealth
-                try await server.verifyLocalHealth(authentication: authentication)
-            case let .conflict(evidence):
-                await publishConflict(evidence, notify: notifyFailure)
-                return
-            }
-            switch routeInspection {
-            case .available:
-                createdRoute = true
-                failedStage = .routeCreation
-                try await route.create(
-                    tailscalePath: tailscalePath,
+                await route.configure(tailscalePath: tailscalePath)
+                failedStage = .routeInspection
+                let routeInspection = try await route.inspect(
                     httpsPort: settings.httpsPort,
                     backendPort: settings.backendPort
                 )
-            case .matching:
-                break
-            case .occupied:
-                return
-            }
-            failedStage = .endpointDiscovery
-            let endpoint = try await route.discoverEndpoint(httpsPort: settings.httpsPort)
-            let enrollment = try await enrollmentState(for: endpoint, username: username)
-            failedStage = .endpointVerification
-            try await route.verifyEndpoint(endpoint, authentication: authentication)
-            await endpointStore.save(endpoint)
-            viewModel = AccessViewModel(
-                desiredState: .enabled, observedState: .available,
-                explanation: settings.accessMode == .protected
-                    ? "Protected access is available."
-                    : "Tailnet-only access is available.",
-                components: [
-                    ComponentReadiness(name: "OpenCode", status: .ready, detail: openCodeVersion),
-                    ComponentReadiness(name: "Tailscale", status: .ready, detail: tailscaleVersion),
-                    ComponentReadiness(name: "Endpoint", status: .ready, detail: endpoint.absoluteString),
-                    ComponentReadiness(name: "Keep Awake", status: .ready, detail: keepAwakeDetail),
-                ],
-                primaryAction: .stop,
-                endpoint: endpoint,
-                enrollment: enrollment
-            )
+                if routeInspection == .occupied {
+                    await publishConflict(
+                        "The Tailscale HTTPS listener or root route has a different target. " +
+                        "OpenCode Connect will not replace or remove it automatically.",
+                        notify: notifyFailure
+                    )
+                    return
+                }
+                failedStage = .serverInspection
+                switch await server.inspect(
+                    record: try await runtimeRecordStore.load(),
+                    expectedConfiguration: configuration,
+                    authentication: authentication
+                ) {
+                case .missing:
+                    failedStage = .serverLaunch
+                    createdServer = try await server.launch(configuration)
+                    if createdServer, let record = try await server.runtimeRecord() {
+                        try await runtimeRecordStore.save(record)
+                    }
+                    failedStage = .localHealth
+                    try await server.verifyLocalHealth(authentication: authentication)
+                case .verified:
+                    failedStage = .localHealth
+                    try await server.verifyLocalHealth(authentication: authentication)
+                case let .conflict(evidence):
+                    await publishConflict(evidence, notify: notifyFailure)
+                    return
+                }
+                switch routeInspection {
+                case .available:
+                    createdRoute = true
+                    failedStage = .routeCreation
+                    try await route.create(
+                        tailscalePath: tailscalePath,
+                        httpsPort: settings.httpsPort,
+                        backendPort: settings.backendPort
+                    )
+                case .matching:
+                    break
+                case .occupied:
+                    return
+                }
+                failedStage = .endpointDiscovery
+                let endpoint = try await route.discoverEndpoint(httpsPort: settings.httpsPort)
+                let enrollment = try await enrollmentState(for: endpoint, username: username)
+                failedStage = .endpointVerification
+                try await route.verifyEndpoint(endpoint, authentication: authentication)
+                await endpointStore.save(endpoint)
+                viewModel = AccessViewModel(
+                    desiredState: .enabled, observedState: .available,
+                    explanation: settings.accessMode == .protected
+                        ? "Protected access is available."
+                        : "Tailnet-only access is available.",
+                    components: [
+                        ComponentReadiness(name: "OpenCode", status: .ready, detail: openCodeVersion),
+                        ComponentReadiness(name: "Tailscale", status: .ready, detail: tailscaleVersion),
+                        ComponentReadiness(name: "Endpoint", status: .ready, detail: endpoint.absoluteString),
+                        ComponentReadiness(name: "Keep Awake", status: .ready, detail: keepAwakeDetail),
+                    ],
+                    primaryAction: .stop,
+                    endpoint: endpoint,
+                    enrollment: enrollment
+                )
                 await reconcilePowerAssertion()
                 await diagnostics.recordLifecycle("Access became Available")
                 return

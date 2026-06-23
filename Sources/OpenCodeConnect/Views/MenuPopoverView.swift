@@ -83,7 +83,9 @@ struct MenuPopoverView: View {
 
             HStack {
                 Button("Choose OpenCode…") { chooseExecutable(for: .openCode) }
+                    .disabled(coordinator.viewModel.desiredState != .disabled)
                 Button("Choose Tailscale…") { chooseExecutable(for: .tailscale) }
+                    .disabled(coordinator.viewModel.desiredState != .disabled)
                 SettingsLink { Text("Settings…") }
                 Button("Diagnostics…") {
                     Task {
@@ -92,7 +94,6 @@ struct MenuPopoverView: View {
                     }
                 }
             }
-            .disabled(coordinator.viewModel.desiredState != .disabled)
 
             HStack {
                 Text("Tailscale is also required on your iPhone.")

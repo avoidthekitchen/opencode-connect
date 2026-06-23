@@ -168,18 +168,13 @@ public struct SystemDependencyReadiness: DependencyReadinessChecking {
     }
 
     private func evaluateTailscale(customPath: String?) async -> DependencyReadiness {
-        let knownPaths = [
-            "/opt/homebrew/bin/tailscale",
-            "/usr/local/bin/tailscale",
-            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-        ]
-        guard let path = resolve(customPath: customPath, knownPaths: knownPaths) else {
+        guard let path = TailscaleExecutableResolver.resolve(customPath: customPath, checking: files) else {
             if let customPath {
                 return .invalidCustomPath(path: customPath, reason: reasonForInvalidPath(customPath))
             }
             return .missing
         }
-        let environment = path.contains(".app/Contents/MacOS/") ? ["TS_MAC_CLIENT_USE_CLI": "1"] : [:]
+        let environment = TailscaleExecutableResolver.environment(for: path)
         let versionResult = await commands.run(CommandRequest(
             executablePath: path,
             arguments: ["version"],

@@ -103,6 +103,7 @@ public struct SystemManagedProcessInspector: ManagedProcessInspecting {
     }
 
     public func isLoopbackPortOccupied(_ port: Int) -> Bool {
+        guard (1...65_535).contains(port) else { return false }
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return false }
         defer { Darwin.close(descriptor) }
@@ -111,11 +112,13 @@ public struct SystemManagedProcessInspector: ManagedProcessInspecting {
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = in_port_t(port).bigEndian
         address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        return withUnsafePointer(to: &address) { pointer in
+        let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
+        if result == 0 { return false }
+        return errno == EADDRINUSE
     }
 
     static func snapshot(atPath path: String) -> ManagedProcessSnapshot? {
@@ -330,7 +333,7 @@ public actor SystemManagedRoute: ManagedRouteControlling {
         endpointRetryDelay: Duration = .milliseconds(250)
     ) {
         self.tailscalePath = tailscalePath
-        self.environment = tailscalePath.contains(".app/Contents/MacOS/") ? ["TS_MAC_CLIENT_USE_CLI": "1"] : [:]
+        self.environment = TailscaleExecutableResolver.environment(for: tailscalePath)
         self.commands = commands
         self.http = http
         self.endpointTimeout = endpointTimeout
@@ -431,7 +434,7 @@ public actor SystemManagedRoute: ManagedRouteControlling {
     }
 
     private static func environment(for tailscalePath: String) -> [String: String] {
-        tailscalePath.contains(".app/Contents/MacOS/") ? ["TS_MAC_CLIENT_USE_CLI": "1"] : [:]
+        TailscaleExecutableResolver.environment(for: tailscalePath)
     }
 }
 

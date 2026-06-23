@@ -96,11 +96,10 @@ struct OpenCodeConnectApp: App {
         let settingsStore = UserDefaultsDependencySettingsStore()
         let desiredStateStore = UserDefaultsDesiredStateStore()
         let settings = settingsStore.load()
-        let tailscalePath = settings.customTailscalePath ?? [
-            "/opt/homebrew/bin/tailscale",
-            "/usr/local/bin/tailscale",
-            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-        ].first(where: FileManager.default.isExecutableFile(atPath:)) ?? "/opt/homebrew/bin/tailscale"
+        let tailscalePath = TailscaleExecutableResolver.resolve(
+            customPath: settings.customTailscalePath,
+            checking: FileManagerExecutableChecker()
+        ) ?? TailscaleExecutableResolver.knownPaths[0]
         let diagnostics = LocalDiagnostics()
         let commandRunner = DiagnosticsCommandRunner(base: ProcessCommandRunner(), diagnostics: diagnostics)
         let coordinator = AccessCoordinator(
