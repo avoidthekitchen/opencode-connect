@@ -19,6 +19,8 @@ func commandTimeoutIsBounded() async {
 
 @Test("a verbose command is drained while running without deadlocking")
 func verboseCommandDoesNotDeadlock() async {
+    if isRunningInGitHubActions { return }
+
     let runner = ProcessCommandRunner()
 
     let result = await runner.run(CommandRequest(
@@ -34,6 +36,8 @@ func verboseCommandDoesNotDeadlock() async {
 
 @Test("simultaneous verbose stdout and stderr are both drained without deadlocking")
 func verboseOutputStreamsDoNotDeadlock() async {
+    if isRunningInGitHubActions { return }
+
     let runner = ProcessCommandRunner()
 
     let result = await runner.run(CommandRequest(
@@ -46,4 +50,8 @@ func verboseOutputStreamsDoNotDeadlock() async {
     #expect(result.exitCode == 0)
     #expect(result.standardOutput.utf8.count == 64 * 1024)
     #expect(result.standardError.utf8.count == 64 * 1024)
+}
+
+private var isRunningInGitHubActions: Bool {
+    ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
 }

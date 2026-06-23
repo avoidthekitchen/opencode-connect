@@ -55,7 +55,7 @@ In Xcode, select the `OpenCodeConnect` scheme and `My Mac`, then choose **Produc
 ./script/build_and_run.sh
 ```
 
-`swift test` runs the Access Coordinator scenarios, recorded CLI parsing contract tests, and limited SwiftUI smoke/accessibility tests. `script/ci.sh` is the command used by GitHub Actions on `macos-26`; it runs Swift Testing as `swift test --parallel --num-workers 1` so process-lifecycle tests do not race each other on hosted macOS runners, then builds and verifies the release ZIP through `script/test_release.sh`.
+`swift test` runs the Access Coordinator scenarios, recorded CLI parsing contract tests, and limited SwiftUI smoke/accessibility tests. `script/ci.sh` is the command used by GitHub Actions on `macos-26`; it runs Swift Testing as `swift test --parallel --num-workers 1` so process-lifecycle tests do not race each other on hosted macOS runners, then builds and verifies the release ZIP through `script/test_release.sh`. The large stdout/stderr pipe-drain stress tests are local-only because hosted macOS runners have repeatedly timed out those subprocesses without producing a product failure.
 
 ## Install a binary release
 
