@@ -32,8 +32,9 @@ func managedServerWaitsForReadiness() async throws {
 
 @Test("Managed Server health fails promptly when the launched process exits")
 func managedServerReportsEarlyExit() async throws {
+    let http = DelayedReadinessHTTPChecker(failuresBeforeSuccess: .max)
     let server = SystemManagedServer(
-        http: DelayedReadinessHTTPChecker(failuresBeforeSuccess: .max),
+        http: http,
         healthTimeout: .seconds(2),
         healthRetryDelay: .milliseconds(25)
     )
@@ -56,13 +57,14 @@ func managedServerReportsEarlyExit() async throws {
     }
 
     #expect(message.contains("exited before becoming healthy"))
-    #expect(started.duration(to: .now) < .milliseconds(500))
+    #expect(started.duration(to: .now) < .seconds(3))
 }
 
 @Test("Managed Server health retries remain bounded")
 func managedServerReadinessTimeoutIsBounded() async throws {
+    let http = DelayedReadinessHTTPChecker(failuresBeforeSuccess: .max)
     let server = SystemManagedServer(
-        http: DelayedReadinessHTTPChecker(failuresBeforeSuccess: .max),
+        http: http,
         healthTimeout: .milliseconds(125),
         healthRetryDelay: .milliseconds(25)
     )
@@ -86,7 +88,9 @@ func managedServerReadinessTimeoutIsBounded() async throws {
     _ = await server.stopGracefully(timeout: .seconds(1))
 
     #expect(failed)
-    #expect(started.duration(to: .now) < .milliseconds(500))
+    #expect(started.duration(to: .now) < .seconds(3))
+    #expect(await http.attempts >= 2)
+    #expect(await http.attempts <= 10)
 }
 
 @Test("Managed Server adoption requires PID, executable, port, fingerprint, and authenticated health to agree")

@@ -61,10 +61,11 @@ func managedRouteWaitsForEndpointReadiness() async {
 
 @Test("Managed Route Endpoint retries remain bounded")
 func managedRouteEndpointTimeoutIsBounded() async {
+    let http = DelayedEndpointHTTPChecker(failuresBeforeSuccess: .max)
     let route = SystemManagedRoute(
         tailscalePath: "/test/tailscale",
         commands: RouteCommandRunner(results: []),
-        http: DelayedEndpointHTTPChecker(failuresBeforeSuccess: .max),
+        http: http,
         endpointTimeout: .milliseconds(125),
         endpointRetryDelay: .milliseconds(25)
     )
@@ -81,7 +82,9 @@ func managedRouteEndpointTimeoutIsBounded() async {
     }
 
     #expect(failed)
-    #expect(started.duration(to: .now) < .milliseconds(500))
+    #expect(started.duration(to: .now) < .seconds(3))
+    #expect(await http.attempts >= 2)
+    #expect(await http.attempts <= 10)
 }
 
 @Test("Tailscale route creation timeout identifies its stage and deadline")

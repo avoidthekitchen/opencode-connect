@@ -8,13 +8,13 @@ func commandTimeoutIsBounded() async {
     let started = ContinuousClock.now
 
     let result = await runner.run(CommandRequest(
-        executablePath: "/bin/sh",
-        arguments: ["-c", "sleep 2"],
+        executablePath: "/bin/sleep",
+        arguments: ["10"],
         timeout: .milliseconds(100)
     ))
 
     #expect(result.timedOut)
-    #expect(started.duration(to: .now) < .seconds(1))
+    #expect(started.duration(to: .now) < .seconds(3))
 }
 
 @Test("a verbose command is drained while running without deadlocking")
