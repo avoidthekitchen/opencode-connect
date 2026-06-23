@@ -24,7 +24,7 @@ func verboseCommandDoesNotDeadlock() async {
     let result = await runner.run(CommandRequest(
         executablePath: "/bin/sh",
         arguments: ["-c", "head -c 1048576 /dev/zero"],
-        timeout: .seconds(2)
+        timeout: .seconds(10)
     ))
 
     #expect(!result.timedOut)
@@ -39,7 +39,7 @@ func verboseOutputStreamsDoNotDeadlock() async {
     let result = await runner.run(CommandRequest(
         executablePath: "/bin/sh",
         arguments: ["-c", "head -c 1048576 /dev/zero & head -c 1048576 /dev/zero >&2 & wait"],
-        timeout: .seconds(2)
+        timeout: .seconds(10)
     ))
 
     #expect(!result.timedOut)

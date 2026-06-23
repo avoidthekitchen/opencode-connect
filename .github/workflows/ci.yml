@@ -9,6 +9,6 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test and verify release packaging
         run: ./script/ci.sh
